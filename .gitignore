@@ -1,4 +1,11 @@
+# Platform build directories:
 .pio
+
+# ESP-IDF configuration files (machine/version specific configs):
+sdkconfig
+sdkconfig.*
+
+# VS Code specific settings that might conflict between machines:
 .vscode/.browse.c_cpp.db*
 .vscode/c_cpp_properties.json
 .vscode/launch.json
