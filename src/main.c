@@ -26,6 +26,7 @@ static const char *TAG = "TEST_MUSICIAN";
 #define UART_RX_PIN 18
 #define UART_BAUD_RATE 115200
 #define UART_RX_BUFFER_SIZE 256
+#define MUSIC_QUEUE_SIZE 256
 
 // Global handle for the LED strip
 static led_strip_handle_t led_strip = NULL;
@@ -62,7 +63,7 @@ typedef struct {
     beat_state_t beats[16];  // Maximum of 16 beats per bar, can be adjusted as needed
 } bar_state_t;
 
-bar_state_t music_queue[256];  // Circular buffer for music state
+bar_state_t music_queue[MUSIC_QUEUE_SIZE];  // Circular buffer for music state
 uint16_t currentBar = 0;  // Track the current bar number for processing
 uint8_t currentBeat = 0;  // Track the current beat number for processing
 uint8_t currentTempo = 120;  // Default tempo in BPM, can be updated based on incoming messages
@@ -114,6 +115,7 @@ typedef struct __attribute__((packed)) {
 
 // Some function prototypes for the functions that will be defined later in the code:
 static void init_music_queue(void);
+static void add_default_tune_to_music_queue(void);
 static void update_music_queue(const baton_msg_t *msg);
 static void on_data_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 static void uart_send_bytes(const uint8_t *data, size_t len);
@@ -138,11 +140,11 @@ static void init_led_colours(void) {
 static void init_music_queue(void) {
     memset(music_queue, 0, sizeof(music_queue));
 
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < MUSIC_QUEUE_SIZE; i++) {
         music_queue[i].bar = i;  // Initialize bar numbers sequentially
         music_queue[i].tempo = 120;  // Default tempo
-        music_queue[i].time_sig_numerator = 4;  // Default time signature numerator
-        music_queue[i].time_sig_denominator = 4;  // Default time signature denominator
+        music_queue[i].time_sig_numerator = 6;  // Default time signature numerator
+        music_queue[i].time_sig_denominator = 8;  // Default time signature denominator
         for (int j = 0; j < 16; j++) {
             music_queue[i].beats[j].beat = j + 1;  // Beat numbers start from 1
             music_queue[i].beats[j].chord_root = 0;  // Default chord (C)
@@ -151,28 +153,88 @@ static void init_music_queue(void) {
         }
     }
 
-    currentBar = 0;
+    add_default_tune_to_music_queue();
+
+    currentBar = music_queue[0].bar;
     currentBeat = 0;
-    currentTempo = 120;
-    currentTimeSigNumerator = 4;
-    currentTimeSigDenominator = 4;
-    currentKey = 0;
-    currentChordRoot = 0;
-    currentChordType = 0;
-    currentBassNote = 0;
-    currentLegato = 0;
-    currentDynamic = 0;
+    currentTempo = music_queue[0].tempo;
+    currentTimeSigNumerator = music_queue[0].time_sig_numerator;
+    currentTimeSigDenominator = music_queue[0].time_sig_denominator;
+    currentKey = music_queue[0].key;
+    currentKeyType = music_queue[0].key_type;
+    currentChordRoot = music_queue[0].beats[0].chord_root;
+    currentChordType = music_queue[0].beats[0].chord_type;
+    currentBassNote = music_queue[0].beats[0].bass_note;
+    currentLegato = music_queue[0].beats[0].legato;
+    currentDynamic = music_queue[0].beats[0].dynamic;
     currentMusicQueueIndex = 0;
+}
+
+static void add_default_tune_to_music_queue(void) {
+
+    // For now, just try this one.  First, defaults for 6/8 in G major.
+    for (uint32_t u = 0; u < MUSIC_QUEUE_SIZE; u++) {
+        music_queue[u].bar = u;
+        music_queue[u].tempo = 60;  // Default tempo
+        music_queue[u].time_sig_numerator = 6;  // Default time signature numerator
+        music_queue[u].time_sig_denominator = 8;  // Default time signature denominator
+        music_queue[u].key = 7;  // Default key (G)
+        music_queue[u].key_type = 0;  // Default key type (major)
+
+        for (uint32_t v = 0; v < 16; v++) {
+            music_queue[u].beats[v].beat = v + 1;  // Beat numbers start from 1
+            music_queue[u].beats[v].chord_root = 0;  // Default chord no change
+            music_queue[u].beats[v].chord_type = 0;  // Default chord type change
+            music_queue[u].beats[v].bass_note = 0;   // Default bass no change
+            music_queue[u].beats[v].legato = 0;  // Default legato no change
+            music_queue[u].beats[v].dynamic = 0;  // Default dynamic no change
+        }
+    }
+
+    uint8_t chord_roots[32] = {
+        8, 5, 8, 5, 1, 3, 8, 3, 
+        8, 1, 5, 1, 3, 12, 5, 5, 
+        1, 1, 5, 5, 1, 1, 8, 3, 
+        8, 5, 8, 3, 8, 5, 1, 3
+    };
+    uint8_t chord_types[32] = {
+        1, 2, 1, 2, 1, 1, 1, 7,
+        1, 1, 2, 1, 1, 7, 2, 2,
+        1, 1, 2, 2, 1, 1, 1, 7,
+        1, 2, 1, 1, 1, 2, 1, 7
+    };
+    uint8_t bass_notes[32] = {
+        8, 8, 8, 8, 1, 3, 8, 8,
+        8, 1, 5, 8, 10, 12, 8, 5,
+        1, 1, 5, 5, 1, 1, 8, 3,
+        8, 8, 8, 12, 8, 5, 1, 3
+    };
+
+    // Then fill up with the chord structure:
+    for (uint32_t w = 0; w < 256; w++) {
+        music_queue[w].beats[0].chord_root = chord_roots[w % 32];
+        music_queue[w].beats[0].chord_type = chord_types[w % 32];
+        music_queue[w].beats[0].bass_note = bass_notes[w % 32];
+        music_queue[w].beats[0].legato = 10;     // Legato = 10
+        music_queue[w].beats[0].dynamic = 8;     // Dynamic = 8
+
+        // One bar has a change of chord in the middle:
+        if (w % 32 == 9) {
+            music_queue[w].beats[3].chord_root = 3;
+            music_queue[w].beats[3].chord_type = 1;
+            music_queue[w].beats[3].bass_note = 3;
+        }
+    }
 }
 
 static void update_music_queue(const baton_msg_t *msg) {
     // Update the music queue based on the incoming baton message.
     // First check that the bar number is within the valid range of the circular buffer,
     // and if so, find the index in the music_queue array corresponding to that bar number.
-    int queue_index = msg->bar % 256;  // Simple modulo-based indexing for circular buffer
+    int queue_index = msg->bar % MUSIC_QUEUE_SIZE;  // Simple modulo-based indexing for circular buffer
     if (music_queue[queue_index].bar != msg->bar) {
         // If the bar number doesn't match, we can either log a warning or handle it as needed.
-        ESP_LOGW(TAG, "Bar number mismatch: %d not in range from %d to %d", msg->bar, music_queue[0].bar, music_queue[255].bar);
+        ESP_LOGW(TAG, "Bar number mismatch: %d not in range from %d to %d", msg->bar, music_queue[0].bar, music_queue[MUSIC_QUEUE_SIZE - 1].bar);
         return;
     }
 
@@ -187,9 +249,9 @@ static void update_music_queue(const baton_msg_t *msg) {
                 // This is a synchronisation message, the current bar starts now.
                 currentBar = msg->bar;
                 currentBeat = 0;
-                currentTempo = music_queue[currentBar % 256].tempo;
-                currentTimeSigNumerator = music_queue[currentBar % 256].time_sig_numerator;
-                currentTimeSigDenominator = music_queue[currentBar % 256].time_sig_denominator;
+                currentTempo = music_queue[currentBar % MUSIC_QUEUE_SIZE].tempo;
+                currentTimeSigNumerator = music_queue[currentBar % MUSIC_QUEUE_SIZE].time_sig_numerator;
+                currentTimeSigDenominator = music_queue[currentBar % MUSIC_QUEUE_SIZE].time_sig_denominator;
                 currentBarStartTime = esp_timer_get_time();  // Record the start time of the current bar
                 // Send a synchronisation message to the UART:
                 // XXX edit this to be identical to the one sent by the main while(1) loop:
@@ -357,7 +419,7 @@ static void on_uart_data_recv(const uint8_t *data, size_t len) {
 
                 // Send the reply message with tempo, key, key type, time signature numerator, and time signature denominator
                 uint8_t reply[11];
-                int queue_index = bar_number % 256;
+                int queue_index = bar_number % MUSIC_QUEUE_SIZE;
 
                 reply[0] = 240 + 11;  // Starting delimiter and length;
                 reply[1] = 0x01; // Sync message type: regular bar sync
@@ -388,7 +450,7 @@ static void on_uart_data_recv(const uint8_t *data, size_t len) {
                 // Send the reply message with chord root, chord type, bass note,
                 // dynamic and legato information:
                 uint8_t reply[6];
-                int queue_index = bar_number % 256;
+                int queue_index = bar_number % MUSIC_QUEUE_SIZE;
                 if (beat_number > 0 && beat_number <= 16) {
                     uint8_t chord_root = music_queue[queue_index].beats[beat_number - 1].chord_root;
                     uint8_t bass_note = music_queue[queue_index].beats[beat_number - 1].bass_note;
@@ -463,11 +525,11 @@ static void init_uart(void) {
 
     ESP_LOGI(TAG, "Initialising UART%d at %d baud, tx pin %d", UART_PORT_NUM, UART_BAUD_RATE, UART_TX_PIN);
     ESP_ERROR_CHECK(uart_param_config(UART_PORT_NUM, &uart_config));
-    ESP_LOGI(TAG, "Does this line print one?");
+    // ESP_LOGI(TAG, "Does this line print one?");
     ESP_ERROR_CHECK(uart_set_pin(UART_PORT_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    ESP_LOGI(TAG, "Does this line print two?");
+    // ESP_LOGI(TAG, "Does this line print two?");
     ESP_ERROR_CHECK(uart_driver_install(UART_PORT_NUM, UART_RX_BUFFER_SIZE * 2, UART_RX_BUFFER_SIZE * 2, 20, NULL, 0));
-    ESP_LOGI(TAG, "Does this line print three?");
+    // ESP_LOGI(TAG, "Does this line print three?");
  
     // There's an issue with creating the receive task.  It crashes UART0 and the ESP_LOGx functions.
     // I'm not sure why, since they are different UARTs.
@@ -561,7 +623,7 @@ void app_main(void) {
 
         // 10 ms resolution should be enough to look synchronised.
         while (currentTime < nextBeatTime) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(20));
             currentTime = esp_timer_get_time();
 
             // If the LED flash time is over, turn off the LEDs
@@ -585,11 +647,11 @@ void app_main(void) {
 
         bool found_next_beat = false;
         while (!found_next_beat) {
-            uint16_t workingBarTempo = music_queue[working_bar % 256].tempo;
-            uint16_t workingBarTimeSigNumerator = music_queue[working_bar % 256].time_sig_numerator;
-            uint16_t workingBarTimeSigDenominator = music_queue[working_bar % 256].time_sig_denominator;
-            float beatsInWorkingBar = (float)workingBarTimeSigNumerator * 4.0f / (float)workingBarTimeSigDenominator;
-            uint32_t beat_duration_us = (uint32_t)((60.0e6 / workingBarTempo) * (4 / workingBarTimeSigDenominator));
+            uint16_t workingBarTempo = music_queue[working_bar % MUSIC_QUEUE_SIZE].tempo;
+            uint16_t workingBarTimeSigNumerator = music_queue[working_bar % MUSIC_QUEUE_SIZE].time_sig_numerator;
+            uint16_t workingBarTimeSigDenominator = music_queue[working_bar % MUSIC_QUEUE_SIZE].time_sig_denominator;
+            uint16_t beatsInWorkingBar = workingBarTimeSigNumerator;
+            uint32_t beat_duration_us = (uint32_t)((60.0e6 / workingBarTempo) * (4.0f / workingBarTimeSigDenominator));
             uint64_t end_of_working_bar_time = beat_time + (uint64_t)(beatsInWorkingBar * beat_duration_us);
 
             if (currentTime < end_of_working_bar_time) {
@@ -615,7 +677,55 @@ void app_main(void) {
             LEDsNowOn = true;
         }
 
-        // And on the first beat in every bar, send the data to the UART:
+        // currentChordRoot, currentChordType, currentBassNote, currentLegato, and currentDynamic need to be updated 
+        // from the music queue on every beat (or left as they are if set to zero):
+        uint32_t changes = 0;
+        uint8_t newChordRoot = music_queue[working_bar % MUSIC_QUEUE_SIZE].beats[working_beat].chord_root;
+        uint8_t newChordType = music_queue[working_bar % MUSIC_QUEUE_SIZE].beats[working_beat].chord_type;
+        uint8_t newBassNote = music_queue[working_bar % MUSIC_QUEUE_SIZE].beats[working_beat].bass_note;
+        uint8_t newLegato = music_queue[working_bar % MUSIC_QUEUE_SIZE].beats[working_beat].legato;
+        uint8_t newDynamic = music_queue[working_bar % MUSIC_QUEUE_SIZE].beats[working_beat].dynamic;
+
+        if (newChordRoot != currentChordRoot && newChordRoot != 0) {
+            changes |= 0x01;
+            currentChordRoot = newChordRoot;
+        }
+        if (newChordType != currentChordType && newChordType != 0) {
+            changes |= 0x02;
+            currentChordType = newChordType;
+        }
+        if (newBassNote != currentBassNote && newBassNote != 0) {
+            changes |= 0x04;
+            currentBassNote = newBassNote;
+        }
+        if (newLegato != currentLegato && newLegato != 0) {
+            changes |= 0x08;
+            currentLegato = newLegato;
+        }
+        if (newDynamic != currentDynamic && newDynamic != 0) {
+            changes |= 0x10;
+            currentDynamic = newDynamic;
+        }
+
+        // ESP_LOGI(TAG, "Bar %d, beat %d had changes: 0x%02X", working_bar, working_beat, (unsigned int)changes);
+
+        // If this isn't the first beat in the bar but something has changed, then a beat update
+        // message needs to be generated and sent:
+        if (working_beat != 0 && changes != 0) {
+            ESP_LOGI(TAG, "Sending beat data for bar %d, beat %d, with changes: 0x%02X", working_bar, working_beat, (unsigned int)changes);
+            uint8_t beat_msg[6];
+            beat_msg[0] = 240 + 6;  // Starting delimiter and length;
+            beat_msg[1] = 0x02; // Beat message type: regular beat update
+            beat_msg[2] = 128 + (working_bar >> 8);  // High byte of bar number
+            beat_msg[3] = working_bar & 0xFF;  // Low byte of bar number
+            beat_msg[4] = currentChordRoot << 4 | currentBassNote;
+            beat_msg[5] = currentChordType;
+
+            uart_send_bytes(beat_msg, sizeof(beat_msg));
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+
+        // Otherwise, on the first beat in every bar, send the data to the UART:
         // if (working_beat == 0) {
         if (working_beat == 0) {
             ESP_LOGI(TAG, "Sending bar data for bar %d, beat %d", working_bar, working_beat);
@@ -624,21 +734,20 @@ void app_main(void) {
             sync_msg[1] = 0x00; // Sync message type: regular bar sync
             sync_msg[2] = 128 + (working_bar >> 8);  // High byte of bar number
             sync_msg[3] = working_bar & 0xFF;  // Low byte of bar number
-            sync_msg[4] = music_queue[working_bar % 256].tempo;
-            sync_msg[5] = music_queue[working_bar % 256].time_sig_numerator;
-            sync_msg[6] = music_queue[working_bar % 256].time_sig_denominator;
-            sync_msg[7] = music_queue[working_bar % 256].key << 4
-                | music_queue[working_bar % 256].key_type;
+            sync_msg[4] = music_queue[working_bar % MUSIC_QUEUE_SIZE].tempo;
+            sync_msg[5] = music_queue[working_bar % MUSIC_QUEUE_SIZE].time_sig_numerator;
+            sync_msg[6] = music_queue[working_bar % MUSIC_QUEUE_SIZE].time_sig_denominator;
+            sync_msg[7] = music_queue[working_bar % MUSIC_QUEUE_SIZE].key << 4
+                | music_queue[working_bar % MUSIC_QUEUE_SIZE].key_type;
 
             // Then make a compressed version of information about
-            // the first beat in the bar, and send that too:
-            sync_msg[8] = music_queue[working_bar % 256].beats[0].chord_root << 4 
-            | music_queue[working_bar % 256].beats[0].bass_note;
-            sync_msg[9] = music_queue[working_bar % 256].beats[0].chord_type;
-            sync_msg[10] = music_queue[working_bar % 256].beats[0].dynamic << 4
-                | music_queue[working_bar % 256].beats[0].legato;
+            // the first beat in the bar, and send that too.
+            sync_msg[8] = currentChordRoot << 4 | currentBassNote;
+            sync_msg[9] = currentChordType;
+            sync_msg[10] = currentDynamic << 4 | currentLegato;
 
             uart_send_bytes(sync_msg, sizeof(sync_msg));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 }
